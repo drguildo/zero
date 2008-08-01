@@ -1,4 +1,4 @@
-CFLAGS = -g -Wall -Wextra
+CFLAGS = -g -Wall
 CC = cc
 
 all: zero
