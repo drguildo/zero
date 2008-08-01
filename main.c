@@ -1,6 +1,8 @@
 #include <sys/stat.h>
 
 #include <err.h>
+#define __USE_XOPEN_EXTENDED
+#include <ftw.h>
 #include <fcntl.h>
 #include <libgen.h>
 #include <stdio.h>
@@ -10,6 +12,8 @@
 #include <unistd.h>
 
 #include "util.h"
+
+int verbose = 0;
 
 static char *randstr(size_t len) {
     const char *chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -22,7 +26,7 @@ static char *randstr(size_t len) {
     for (i = 0; i < len; i++) {
         name[i] = chars[rand() % strlen(chars)];
     }
-    name[len] = '\0';
+    name[len+1] = '\0';
 
     return name;
 }
@@ -38,7 +42,10 @@ static char *randren(const char *path) {
 
     dname = dirname(pathcopy);
 
-    rname = randstr(pathconf(path, _PC_NAME_MAX));
+    /* Calling pathconf directly on a symlink will return the value for
+     * the file that it links to or, if it's a dangling symlink, -1
+     * (failure) so we use the directory it's stored in instead. */
+    rname = randstr(pathconf(dname, _PC_NAME_MAX));
 
     newpathlen += strlen(dname);
     newpathlen += strlen(rname);
@@ -104,26 +111,68 @@ static int fzero(const char *path) {
     return 0;
 }
 
-int main(int argc, char *argv[]) {
-    int i;
+int can_write(const struct stat *sb) {
+    uid_t id;
+
+    id = geteuid();
+    if (sb->st_uid == id) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int fn(const char *fpath, const struct stat *sb, int typeflag,
+       struct FTW *ftwbuf) {
     char *path;
 
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s [file ...]\n", argv[0]);
+    if (!can_write(sb)) {
+        return 0;
+    }
+
+    path = randren(fpath);
+    if (path == NULL) {
+        return 1;
+    }
+
+    switch (typeflag) {
+        case FTW_SL:
+            unlink(path);
+            break;
+        case FTW_F:
+            if (fzero(path) != -1) {
+                unlink(path);
+            }
+            break;
+        case FTW_DP:
+            rmdir(path);
+            break;
+    }
+    free(path);
+
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    int i, c;
+
+    while ((c = getopt(argc, argv, "+v")) != -1) {
+        switch (c) {
+            case 'v':
+                verbose = 1;
+                break;
+        }
+    }
+
+    if (optind == argc) {
+        fprintf(stderr, "usage: %s [-rv] [file ...]\n", argv[0]);
         return 1;
     }
 
     srand(time(NULL));
 
-    for (i = 1; i < argc; i++) {
-        path = randren(argv[i]);
-
-        if (path != NULL) {
-            if (fzero(path) != -1) {
-                unlink(path);
-            }
-            free(path);
-        }
+    for (i = optind; i < argc; i++) {
+        nftw(argv[i], fn, 10, FTW_DEPTH | FTW_PHYS);
     }
 
     return 0;
