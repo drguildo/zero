@@ -107,6 +107,12 @@ static int fzero(const char *path) {
 
     while (written < stbuf.st_size) {
         written += write(fd, buf, stbuf.st_blksize);
+        if (verbose) {
+            putchar('.');
+        }
+    }
+    if (verbose) {
+        putchar('\n');
     }
 
     fdatasync(fd);
